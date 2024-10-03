@@ -18,6 +18,10 @@ type WsServer struct {
 	handlers map[string]eventHandleFunction
 }
 
+type ServerResponse struct {
+	Status string `json:"status"`
+}
+
 func NewWsServer() *WsServer {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -42,7 +46,7 @@ func (ws *WsServer) HandleNewConnection(c *gin.Context) {
 
 	wsClient := NewWsClient(conn, uint(len(ws.clients)+1))
 	ws.addClient(&wsClient)
-	wsClient.Emit("reply", "WelcomeMensagemIndividual")
+	wsClient.Emit("reply", ServerResponse{Status: "Ok"})
 
 	go ws.waitForMessage(&wsClient)
 }

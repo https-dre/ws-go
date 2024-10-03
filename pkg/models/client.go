@@ -1,6 +1,9 @@
 package models
 
 import (
+	"encoding/json"
+	"errors"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -22,7 +25,24 @@ func (client *WsClient) sendMessage(data []byte) error {
 	return client.Conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func (client *WsClient) Emit(event string, message string) error {
-	combinedMessage := "4" + lim + event + lim + message
-	return client.sendMessage([]byte(combinedMessage))
+func (client *WsClient) Emit(event string, data interface{}) error {
+	var message []byte
+	var messageType string
+	var err error
+
+	switch v := data.(type) {
+	case string:
+		message = []byte(v)
+		messageType = "string"
+	default:
+		messageType = "json"
+		message, err = json.Marshal(data)
+		if err != nil {
+			return errors.New("erro ao serializar o dado para JSON")
+		}
+	}
+	combinedMessage := []byte("4" + lim + event + lim + messageType + lim + "\n")
+	combinedMessage = append(combinedMessage, message...)
+
+	return client.sendMessage(combinedMessage)
 }
