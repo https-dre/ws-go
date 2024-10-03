@@ -1,15 +1,21 @@
 package models
+
 import (
 	"log"
 	"net/http"
-	
+	"sync"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
+type eventHandleFunction func(client *WsClient)
+
 type WsServer struct {
 	server  websocket.Upgrader
 	clients []*WsClient
+	mu sync.Mutex
+	handlers map[string]eventHandleFunction
 }
 
 func NewWsServer() *WsServer {
@@ -35,17 +41,21 @@ func (ws *WsServer) HandleNewConnection(c *gin.Context) {
 	}
 
 	wsClient := NewWsClient(conn, uint(len(ws.clients)+1))
-	ws.AddClient(&wsClient)
+	ws.addClient(&wsClient)
+	wsClient.Emit("reply", "WelcomeMensagemIndividual")
 
-	go ws.WaitForMessage(&wsClient)
-
+	go ws.waitForMessage(&wsClient)
 }
 
-func (ws *WsServer) AddClient(client *WsClient) {
+func (ws *WsServer) addClient(client *WsClient) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 	ws.clients = append(ws.clients, client)
 }
 
-func (ws *WsServer) RemoveClient(client *WsClient) {
+func (ws *WsServer) removeClient(client *WsClient) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 	for i, c := range ws.clients {
 		if c.Id == client.Id {
 			ws.clients = append(ws.clients[:i], ws.clients[i+1:]...)
@@ -54,14 +64,14 @@ func (ws *WsServer) RemoveClient(client *WsClient) {
 	}
 }
 
-func (ws *WsServer) WaitForMessage(client *WsClient) {
+func (ws *WsServer) waitForMessage(client *WsClient) {
 	conn := client.Conn
 
 	for {
 		msgType, msg, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("Erro ao ler mensagem do cliente %d: %v", client.Id, err)
-			ws.RemoveClient(client)
+			ws.removeClient(client)
 			conn.Close()
 			break
 		}
@@ -77,10 +87,25 @@ func (ws *WsServer) WaitForMessage(client *WsClient) {
 	}
 }
 
-func (ws *WsServer) SendMessage(client *WsClient, data []byte) error {
-	err := client.Conn.WriteMessage(websocket.TextMessage, data)
-	if err != nil {
-		return err
+func (ws *WsServer) Emit(event string, message string) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	for _, client := range ws.clients {
+		if err := client.Emit(event, message); err != nil {
+			log.Printf("Erro ao enviar mensagem para o cliente %d: %v", client.Id, err)
+			client.Conn.Close()
+			ws.removeClient(client)
+		}
 	}
-	return nil
+}
+
+func (ws *WsServer) setEventHandler(event string, handler eventHandleFunction) {
+	ws.handlers[event] = handler
+}
+
+func (ws *WsServer) triggerEvent(event string, client *WsClient) {
+	if handler, exists := ws.handlers[event]; exists {
+		handler(client)
+	}
 }
